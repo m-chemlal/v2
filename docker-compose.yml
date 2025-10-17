@@ -1,0 +1,101 @@
+version: "3.9"
+
+name: trusted-ai-soc-lite
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: soc-postgres
+    environment:
+      POSTGRES_DB: soc
+      POSTGRES_USER: soc_user
+      POSTGRES_PASSWORD: soc_password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - soc-net
+
+  backend:
+    build: ./backend
+    container_name: soc-backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://soc_user:soc_password@postgres:5432/soc
+      - UVICORN_HOST=0.0.0.0
+      - UVICORN_PORT=8000
+    ports:
+      - "8000:8000"
+    volumes:
+      - shared-data:/data
+    networks:
+      - soc-net
+
+  scanner:
+    build: ./scanner
+    container_name: soc-scanner
+    depends_on:
+      backend:
+        condition: service_started
+    environment:
+      - BACKEND_BASE_URL=http://backend:8000
+      - SCAN_TARGETS=192.168.1.0/24
+      - SCAN_INTERVAL=900
+    volumes:
+      - shared-data:/data
+    networks:
+      - soc-net
+
+  ai-engine:
+    build: ./ai_engine
+    container_name: soc-ai
+    depends_on:
+      backend:
+        condition: service_started
+    environment:
+      - BACKEND_BASE_URL=http://backend:8000
+      - MODEL_REFRESH_INTERVAL=600
+    volumes:
+      - shared-data:/data
+    networks:
+      - soc-net
+
+  responder:
+    build: ./responder
+    container_name: soc-responder
+    depends_on:
+      backend:
+        condition: service_started
+    environment:
+      - BACKEND_BASE_URL=http://backend:8000
+    volumes:
+      - shared-data:/data
+    networks:
+      - soc-net
+
+  frontend:
+    build: ./frontend
+    container_name: soc-frontend
+    depends_on:
+      backend:
+        condition: service_started
+    environment:
+      - VITE_API_BASE_URL=http://localhost:8000
+    ports:
+      - "5173:5173"
+    networks:
+      - soc-net
+
+networks:
+  soc-net:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  shared-data:
